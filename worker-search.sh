@@ -636,6 +636,23 @@ def fmt_model(label, hf_path, config_path, readme_path, detail_path='', preferre
     ctx.append(f"URL: https://huggingface.co/{repo}")
     if total_params:
         ctx.append(f"Total parameters: {total_params}")
+    # Extract activated parameters for MoE models from README
+    if os.path.exists(readme_path):
+        try:
+            with open(readme_path) as f:
+                _rtxt_act = f.read(5000).lower()
+            import re as _re
+            for _ap in [
+                r'activated\s+param[^|]*?\|\s*(\d+(?:\.\d+)?)\s*([bt])\b',   # table: "| Activated Parameters | 32B |"
+                r'(\d+(?:\.\d+)?)\s*([bt])\s*(?:activated|active)\s*param',   # inline: "32B activated parameters"
+            ]:
+                _am = _re.search(_ap, _rtxt_act)
+                if _am:
+                    _av = float(_am.group(1))
+                    _au = 'T' if _am.group(2) == 't' else 'B'
+                    ctx.append(f"Activated parameters: {_av:.0f}{_au} (per token)")
+                    break
+        except: pass
     ctx.append("")
     # Warn about similar variants that could cause confusion
     if other_variants:
@@ -807,7 +824,7 @@ def fmt_model(label, hf_path, config_path, readme_path, detail_path='', preferre
             target_col = -1
             repo_name = repo.split('/')[-1]
             repo_norm = re.sub(r'[^a-z0-9]', '', repo_name.lower())
-            repo_parts = [p for p in repo_name.lower().split('-') if len(p) > 2]
+            # (repo_parts removed — Pass 3 now uses token-based matching)
 
             # Pass 1: exact normalized match (e.g. "Qwen3-30B-A3B" == "Qwen3-30B-A3B")
             for ci, cn in enumerate(col_names):
@@ -826,14 +843,27 @@ def fmt_model(label, hf_path, config_path, readme_path, detail_path='', preferre
                         target_col = ci
                         break
 
-            # Pass 3: all significant parts match (fallback for format differences)
-            if target_col < 1 and repo_parts:
+            # Pass 2.5: repo starts with column (repo has extra suffix, e.g. repo "GLM-5-0520" matches column "GLM-5")
+            if target_col < 1:
                 for ci, cn in enumerate(col_names):
                     if ci == 0: continue
-                    cn_low = cn.lower().replace('-', ' ')
-                    if all(part in cn_low for part in repo_parts):
+                    cn_norm = re.sub(r'[^a-z0-9]', '', cn.lower())
+                    if len(cn_norm) >= 4 and repo_norm.startswith(cn_norm):
                         target_col = ci
                         break
+
+            # Pass 3: TOKEN-BASED matching (split on spaces/hyphens/underscores, NOT dots)
+            # "GLM-5" tokens: {"glm","5"}. Column "GLM-4.5" tokens: {"glm","4.5"} → "5" not in set → no match
+            # This prevents "5" substring-matching inside "4.5" or "15"
+            if target_col < 1:
+                repo_tokens = set(p for p in re.split(r'[\s\-_]+', repo_name.lower()) if p)
+                if len(repo_tokens) >= 2:
+                    for ci, cn in enumerate(col_names):
+                        if ci == 0: continue
+                        cn_tokens = set(p for p in re.split(r'[\s\-_]+', cn.lower()) if p)
+                        if repo_tokens.issubset(cn_tokens):
+                            target_col = ci
+                            break
 
             if target_col < 1: continue  # col 0 is benchmark name
 

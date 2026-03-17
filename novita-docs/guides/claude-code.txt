@@ -70,12 +70,30 @@ Claude Code is an AI-powered coding assistance published by Anthropic that provi
 Now, Novita provides Anthropic SDK compatible LLM API services , enabling you to easily use Novita LLM models in Claude Code to complete tasks. Please refer to the guide below to complete the integration process.
 ## ​Quick Start
 ### ​1. Install Claude Code
-Before installing Claude Code, please ensure your local environment has Node.js 18 or higher installed.
-To install Claude Code, run the following command:
+To install Claude Code, run the official installer:
+
+**macOS, Linux, WSL:**
 Bash Copy
 ```
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://claude.ai/install.sh | bash
 ```
+
+**Windows PowerShell:**
+Bash Copy
+```
+irm https://claude.ai/install.ps1 | iex
+```
+
+**Windows CMD:**
+Bash Copy
+```
+curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd
+```
+
+**Note:** Windows requires Git for Windows. Native installations automatically update in the background.
+
+**Alternative (npm):**
+If you prefer npm: `npm install -g @anthropic-ai/claude-code` (requires Node.js 18+).
 ### ​2. Start your first session
 import from ‘/snippets/setup-api-key-guide.mdx’;
 Please find the list of models currently available for use in Claude Code here .

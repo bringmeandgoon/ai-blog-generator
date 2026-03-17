@@ -26,14 +26,15 @@ Every factual claim MUST come from the pre-fetched context. NEVER use your own k
 | GGUF quantization sizes / VRAM | Unsloth GGUF repo | `--- Unsloth GGUF Quantization Sizes ---` | Scenario Decision Table, GPU Recs |
 | API token pricing | Novita AI API | `>>> USE THIS PRICE <<<` | Cost Analysis, API sections |
 | GPU instance pricing | Novita GPU pricing | `--- Novita AI GPU Instance Pricing ---` | Scenario Table, Cost Comparison |
-| Provider comparison (pricing, uptime) | OpenRouter | `--- OpenRouter Provider Data ---` | Provider tables, Cost Comparison |
-| Novita-specific performance (latency, throughput) | HF Inference Providers | `--- HuggingFace Inference Providers ---` | "Why Choose Novita" sections |
+| Provider comparison (pricing, uptime) | OpenRouter | `--- OpenRouter Provider Data ---` | Provider tables (pricing + uptime ONLY, NOT throughput) |
+| Throughput, latency, TTFT (ALL providers) | HF Inference Providers ONLY | `--- HuggingFace Inference Providers ---` | Any section mentioning speed/throughput/latency |
 | Tool setup steps | Novita RAG docs | `--- Novita AI Integration Guide ---` | How to Access, Setup guides |
 | Tips, gotchas, community voices | Web Research (Tavily) | `--- Web Research ---` | Woven into all sections |
 
 **Rules:**
 - If context has the data → use it exactly. If context has NO data for an item → write "not publicly disclosed". NEVER guess, round, or substitute from memory.
 - **Cite the CORRECT source.** If a number comes from HF → say "HuggingFace", NOT "OpenRouter". NEVER mis-attribute data between sources.
+- **Throughput/latency: HuggingFace Inference Providers table ONLY.** Do NOT use throughput numbers from OpenRouter. If both sources appear in context, IGNORE OpenRouter's throughput/latency columns — use HF's `Throughput(t/s)` and `TTFT(s)` columns exclusively.
 
 ## VERSION VERIFICATION (CRITICAL — #1 RULE)
 

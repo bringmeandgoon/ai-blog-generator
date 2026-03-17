@@ -50,9 +50,10 @@ Review and FIX the article according to these rules. Output the CORRECTED articl
 - Setup commands (env vars, install steps) MUST come from the pre-search Novita integration guide or official tool docs.
 
 **Known tool restrictions (HARD BLOCKLIST — remove on sight):**
-- **Claude Code does NOT support**: temperature, top-p, top-k, or any sampling parameter configuration. There are NO `--temperature`, `--top-p`, `--top-k` flags. If the article includes a "Sampling Parameters" section for Claude Code, DELETE it entirely.
+- **Claude Code installation**: The official method is `curl -fsSL https://claude.ai/install.sh | bash` (macOS/Linux/WSL) or `irm https://claude.ai/install.ps1 | iex` (Windows PowerShell). Windows requires Git for Windows. The old `npm install -g @anthropic-ai/claude-code` still works but is NOT the recommended method. If the article only shows npm install, ADD the native installer as the primary method.
+- **Claude Code does NOT support**: temperature, top-p, top-k, or any sampling parameter configuration. There are NO `ANTHROPIC_TEMPERATURE`, `ANTHROPIC_TOP_P`, `ANTHROPIC_TOP_K` env vars or CLI flags. If the article includes any sampling parameter configuration for Claude Code, DELETE it entirely.
 - **Claude Code does NOT require manual tool-calling configuration**: Users do NOT write tool-calling JSON schemas. Claude Code handles tool use internally. Remove any fabricated `{"type": "function", "function": {...}}` examples that claim to be "how Claude Code uses tools."
-- **Novita AI API key format**: Always starts with `sk-` (e.g., `sk-xxxxxx`). If the article shows a different format, FIX it.
+- **Novita AI API key format**: Always starts with `sk-` (e.g., `sk-xxxxxx`). NEVER `nv-xxxxxx`. If the article shows a different format, FIX it.
 - **General rule**: If a "configuration" or "optimization" section describes parameters the tool does not actually expose, REMOVE the entire section rather than leaving misleading content.
 
 **8. COMPETITIVE & BRAND RULES**
@@ -70,7 +71,18 @@ Review and FIX the article according to these rules. Output the CORRECTED articl
 **10. FORMATTING**
 - English punctuation: comma followed by a space (`, `), period followed by a space (`. `). No Chinese punctuation.
 - Product/tool mentions: always include a link on first mention (e.g., GPU product page, tool docs page).
-- Tool names: "Claude Code" (two words, both capitalized), "OpenClaw" (one word, camel case).
+- Tool names: "Claude Code" (two words, both capitalized), "OpenClaw" (one word, camel case). Check ALL occurrences — never "claude code", "Claude code", "openclaw", "Openclaw".
+- Spelling: "Recommended Reading" (NOT "Recommend Reading"). Double-check common -ed/-ing endings.
+- Do NOT describe coding tools as connecting "through official connectors" — they integrate via API endpoints and environment variables, not physical/official connectors.
+
+**11. THROUGHPUT & PARAMETER ACCURACY**
+- **Throughput numbers** must match the HuggingFace Inference Providers data in pre-search context. If the article claims X tokens/s but the pre-search data shows Y, FIX to Y. If no throughput data exists in context, write "varies by provider" — never guess.
+- **Parameter counts** must match `config.json` data. Common error: confusing total params with activated params for MoE models. Always specify which one: "754B total parameters (29B activated per token)".
+- **Model comparison benchmarks must use current models**: Do NOT compare against old model versions (e.g. Claude Sonnet 3.5) when newer versions exist (Claude Sonnet 4.5). Use the model versions found in the HuggingFace benchmark tables.
+
+**12. COST COMPARISON RULES**
+- VRAM articles: the Deployment Decision Matrix MUST be qualitative only. NO dollar-amount monthly cost calculations (no "$X/month vs $Y/month"). If a quantitative cost table exists alongside the Decision Matrix, REMOVE the quantitative table.
+- Novita AI description: use the standard version — "Novita AI is an all-in-one cloud platform for AI development, offering API access, serverless deployment, and GPU instances." Do NOT use marketing-heavy variations with "empowers your AI ambitions" or "make your AI vision a reality".
 
 ### Output
 - Output the corrected article ONLY. No commentary, no notes, no explanations.

@@ -13,6 +13,8 @@ You receive an **outline JSON** (sections with data source assignments) and **pr
 7. **No Absolute Claims**: NEVER use "best", "fastest", "most powerful". Use "among the top", "one of the leading", "competitive with"
 8. **Grammar & Proofreading**: Free of grammatical errors, typos, awkward phrasing
 9. **Code Examples Must Be Verifiable**: Every code snippet, CLI command, env var, or configuration MUST come from official docs or pre-search data. NEVER fabricate code examples, API schemas, or tool flags. If you cannot verify a code example, do NOT include it.
+10. **Claude Code Installation**: Always show the native installer (`curl -fsSL https://claude.ai/install.sh | bash`) as the primary method. Windows requires Git. The npm method (`npm install -g @anthropic-ai/claude-code`) is a secondary alternative only.
+11. **Novita AI Standard Description**: When introducing Novita AI, use: "Novita AI is an all-in-one cloud platform for AI development, offering API access, serverless deployment, and GPU instances." Do NOT use marketing-heavy copy.
 
 ## Writing Rules — Visual-First, Thesis-Driven
 

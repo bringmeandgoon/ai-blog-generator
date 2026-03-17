@@ -9,8 +9,9 @@
 2. **Model Overview** — Parameters, architecture (dense vs MoE), why VRAM matters for this model
    - 📌 From HF model card `--- Model ---`
 
-3. **VRAM Requirements by Quantization** (table) — FP16/BF16, Q8, Q4_K_M, Q2_K with exact VRAM numbers
+3. **VRAM Requirements by Quantization** (table) — BF16 (full precision), FP8/Q8_0 (8-bit), Q4_K_M, Q2_K with exact VRAM numbers. ALWAYS include 8-bit as the most common production precision.
    - 📌 From `--- Unsloth GGUF Quantization Sizes ---`
+   - FP8 / 8-bit VRAM: use the Q8_0 size from the Unsloth GGUF repo (file size ≈ minimum VRAM)
 
 4. **GPU Recommendations** (decision table) — Scenario (testing/production/budget) → GPU → Quantization → Cost
    - 📌 GPU pricing from `--- Novita AI GPU Instance Pricing ---`

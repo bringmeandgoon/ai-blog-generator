@@ -29,7 +29,9 @@
 - ❌ Cost Comparison: API vs Self-Hosted (this is VRAM/How to Access territory)
 - ❌ "How to Access" via web/API/local (this is How to Access article territory)
 - ❌ Fabricated tool-calling JSON schemas or API examples not from official docs
-- ❌ Configuration parameters (temperature, top-p) that the tool does not support
+- ❌ Configuration parameters (temperature, top-p, top-k) that the tool does not support
+- ❌ `ANTHROPIC_TEMPERATURE`, `ANTHROPIC_TOP_P`, `ANTHROPIC_TOP_K` env vars (these do NOT exist for Claude Code)
+- ❌ Showing `npm install` as the primary Claude Code install method (use native installer: `curl -fsSL https://claude.ai/install.sh | bash`)
 
 The article focuses on ONE tool (the one in the keyword). Show ONLY how to set it up and use it effectively with the model.
 

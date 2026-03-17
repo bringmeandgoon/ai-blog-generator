@@ -118,9 +118,10 @@ Use ALL quantization options found in research data (HuggingFace, Unsloth docs).
 
 | Configuration | VRAM Required | Disk Space | Quality Impact |
 |---------------|---------------|------------|----------------|
-| FP16 (full)   | [GB]          | [GB]       | Baseline       |
-| [Quant format] | [GB]         | [GB]       | [impact]       |
-| [Quant format] | [GB]         | [GB]       | [impact]       |
+| BF16 (full)   | [GB]          | [GB]       | Baseline       |
+| Q8_0 (8-bit)  | [GB]          | [GB]       | <1% quality loss |
+| Q4_K_M (4-bit)| [GB]          | [GB]       | 2-4% quality loss |
+| Q2_K (2-bit)  | [GB]          | [GB]       | Significant loss |
 
 ### GPU Recommendations
 
@@ -160,8 +161,8 @@ Llama 3.3 70B is Meta's 70-billion parameter dense transformer, optimized for in
 
 | Configuration | VRAM Required | Disk Space | Quality Impact |
 |---------------|---------------|------------|----------------|
-| FP16 (full)   | 140 GB        | 140 GB     | Baseline (100%) |
-| INT8           | 35 GB         | 70 GB      | <1% quality loss |
+| BF16 (full)   | 140 GB        | 140 GB     | Baseline (100%) |
+| Q8_0 (8-bit)  | 74 GB         | 74 GB      | <1% quality loss |
 | INT4 (GPTQ)   | 20 GB         | 35 GB      | 2-3% quality loss |
 | GGUF Q4_K_M   | 18 GB         | 40 GB      | 2-4% quality loss |
 
