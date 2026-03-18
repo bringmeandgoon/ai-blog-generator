@@ -49,9 +49,7 @@ async function pollJob(jobId, maxWait = 10 * 60 * 1000) {
       return { review: true, sources: data.sources, summary: data.summary, rawContext: data.rawContext, jobId };
     }
 
-    if (data.status === 'outline_review') {
-      return { outline_review: true, outline: data.outline, allSources: data.allSources, jobId };
-    }
+    // outline_review removed — architect merged into write agent
 
     if (data.status === 'clarification') {
       return { clarification: true, question: data.question, context: data.jobContext };

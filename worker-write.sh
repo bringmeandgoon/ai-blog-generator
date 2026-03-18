@@ -13,124 +13,20 @@ prepare_write_context() {
       # Strip removed URLs from context
       PRE_CONTEXT=$(echo "$PRE_CONTEXT" | strip_removed_urls "$REMOVED_URLS")
 
-      # Load architect outline if it exists (from the architect phase)
-      ARCHITECT_JSON=""
-      EDITED_OUTLINE=$(cat "$JOBS_DIR/pending/${JOBID}.processing" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('editedOutline',{})))" 2>/dev/null)
-      if [ -f "$JOBS_DIR/logs/${JOBID}.architect.json" ]; then
-        if [ -n "$EDITED_OUTLINE" ] && [ "$EDITED_OUTLINE" != "{}" ] && [ "$EDITED_OUTLINE" != "null" ]; then
-          ARCHITECT_JSON="$EDITED_OUTLINE"
-          echo "[worker] [$JOBID] Using user-edited outline"
-        else
-          ARCHITECT_JSON=$(cat "$JOBS_DIR/logs/${JOBID}.architect.json" 2>/dev/null)
-          echo "[worker] [$JOBID] Using architect-generated outline"
-        fi
-      fi
+      # Detect article type (same logic as worker-search fan-out)
+      local TOPIC_FOR_TYPE
+      TOPIC_FOR_TYPE=$(cat "$JOBS_DIR/pending/${JOBID}.processing" | python3 -c "import sys,json; print(json.load(sys.stdin)['topic'])" 2>/dev/null)
+      ARTICLE_TYPE="platform"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'vram|\bmemory\b' && ARTICLE_TYPE="vram"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE ' vs ' && ARTICLE_TYPE="vs"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'api.*(provider|pricing|cost|comparison)' && ARTICLE_TYPE="api_provider"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'how.*(access|use)' && ARTICLE_TYPE="how_to"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE '\b(in|with)\s+(opencode|open.code|openclaw|open.claw|claude.code|trae|cursor|continue|codecompanion)\b' && ARTICLE_TYPE="tool_integration"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE '\bon\s+(novita|together|replicate|hugging.?face|fireworks|groq|deepinfra)\b|^deploy\b' && ARTICLE_TYPE="platform"
 
-      # Fetch text content for any new URLs in the outline that aren't in context
-      if [ -n "$ARCHITECT_JSON" ] && [ "$ARCHITECT_JSON" != "{}" ]; then
-        source /tmp/blog_search_env.sh
-        NEW_URLS_CONTENT=$(OUTLINE_JSON="$ARCHITECT_JSON" EXISTING_CTX="$PRE_CONTEXT" python3 << 'FETCH_NEW_EOF'
-import json, os, re, subprocess, sys
-
-outline_raw = os.environ.get('OUTLINE_JSON', '{}')
-existing_ctx = os.environ.get('EXISTING_CTX', '')
-
-try:
-    outline = json.loads(outline_raw)
-except:
-    exit(0)
-
-# Collect all URLs from outline dataSources
-all_urls = []
-for sec in outline.get('sections', []):
-    for ds in sec.get('dataSources', []):
-        url = ds.get('url', '')
-        if url:
-            all_urls.append(url)
-
-if not all_urls:
-    exit(0)
-
-# Find URLs not already mentioned in existing context
-new_urls = [u for u in all_urls if u not in existing_ctx]
-if not new_urls:
-    exit(0)
-
-# Deduplicate while preserving order
-seen = set()
-unique_new = []
-for u in new_urls:
-    if u not in seen:
-        seen.add(u)
-        unique_new.append(u)
-
-print(f"[fetch-new] {len(unique_new)} new URLs to fetch", file=sys.stderr, flush=True)
-
-# Fetch each URL, extract text
-curl_bin = "/opt/homebrew/opt/curl/bin/curl"
-proxy_port = ""
-try:
-    r = subprocess.run(["scutil", "--proxy"], capture_output=True, text=True, timeout=5)
-    for line in r.stdout.split("\n"):
-        if "HTTPPort" in line:
-            p = line.split(":")[-1].strip()
-            if p and p != "0":
-                proxy_port = p
-except:
-    pass
-
-results = []
-for url in unique_new[:8]:  # max 8 new URLs
-    try:
-        cmd = [curl_bin, "-sL", "--max-time", "15",
-               "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"]
-        if proxy_port:
-            cmd.extend(["-x", f"http://127.0.0.1:{proxy_port}"])
-        cmd.append(url)
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-        html = r.stdout
-        if not html or len(html) < 100:
-            continue
-
-        # Strip HTML to plain text
-        text = html
-        # Remove script/style blocks
-        text = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', text, flags=re.I)
-        text = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', text, flags=re.I)
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', ' ', text)
-        # Decode entities
-        import html as html_lib
-        text = html_lib.unescape(text)
-        # Collapse whitespace
-        text = re.sub(r'[ \t]+', ' ', text)
-        text = re.sub(r'\n\s*\n', '\n\n', text)
-        text = text.strip()
-
-        # Truncate per URL (keep first 3000 chars)
-        if len(text) > 3000:
-            text = text[:3000] + "..."
-
-        if len(text) > 100:
-            results.append(f"[{url}]\n{text}")
-            print(f"[fetch-new] Fetched {url} ({len(text)} chars)", file=sys.stderr, flush=True)
-        else:
-            print(f"[fetch-new] Skipped {url} (too short after extraction)", file=sys.stderr, flush=True)
-    except Exception as e:
-        print(f"[fetch-new] Failed {url}: {e}", file=sys.stderr, flush=True)
-
-if results:
-    print("\n--- Additional Sources (user-added URLs) ---")
-    print("\n\n".join(results))
-    print("")
-FETCH_NEW_EOF
-)
-        if [ -n "$NEW_URLS_CONTENT" ]; then
-          PRE_CONTEXT="${PRE_CONTEXT}
-${NEW_URLS_CONTENT}"
-          echo "[worker] [$JOBID] Fetched new URL content ($(echo "$NEW_URLS_CONTENT" | wc -c | tr -d ' ') bytes)"
-        fi
-      fi
+      # Load article type template for write agent
+      ARTICLE_TEMPLATE=$(load_template "$ARTICLE_TYPE")
+      echo "[worker] [$JOBID] Write: type=$ARTICLE_TYPE, template=$(echo "$ARTICLE_TEMPLATE" | wc -c | tr -d ' ') bytes"
 
 }
 
@@ -220,21 +116,13 @@ Proceed with this answer. Do NOT ask any more questions. Generate the article di
 "
       fi
 
-      # Build outline injection block if architect outline exists
-      OUTLINE_BLOCK=""
-      if [ -n "$ARCHITECT_JSON" ] && [ "$ARCHITECT_JSON" != "{}" ] && [ "$ARCHITECT_JSON" != "null" ]; then
-        OUTLINE_BLOCK="
-ARTICLE OUTLINE (coverage guide — NOT a rigid contract):
-${ARCHITECT_JSON}
-
-OUTLINE USAGE:
-- The outline tells you WHAT topics to cover and WHICH sources to cite — use it as a coverage checklist
-- You decide HOW to structure the narrative. You MAY merge, reorder, or split sections if it improves flow
-- Build a SINGLE NARRATIVE THREAD: each section should build on the previous one, not repeat shared context
-- A fact/quote/insight should appear ONCE in the most relevant section — NEVER repeat across sections
-- If the outline assigns the same source to multiple sections, decide which section benefits most and cite it there only
-- You MAY skip a section if it has no meaningful data support or would be redundant
-- Inline-cite source URLs from dataSources wherever you state facts
+      # Build article type template block for the write agent (architect merged in)
+      TEMPLATE_BLOCK=""
+      if [ -n "$ARTICLE_TEMPLATE" ]; then
+        TEMPLATE_BLOCK="
+ARTICLE TYPE: ${ARTICLE_TYPE}
+STRUCTURE REFERENCE (use as guidance, NOT rigid template):
+${ARTICLE_TEMPLATE}
 "
       fi
 
@@ -296,26 +184,39 @@ DATA_MAP_EOF
       PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.prompt"
       cat > "$PROMPT_FILE" <<ARTICLE_PROMPT_EOF
 ${ANSWER_PREFIX}Topic: ${TOPIC}
-
-${OUTLINE_BLOCK}
+${TEMPLATE_BLOCK}
 
 DATA OVERVIEW (compressed summary — use as roadmap, verify specifics from raw files):
 ${PRE_CONTEXT}
 
 ${DATA_MAP}
 
-AGENT WORKFLOW — you have full Read/Bash tool access, USE IT:
-1. The compressed overview above gives you the big picture and section plan
-2. Before writing each section, READ the relevant raw data files to get exact numbers:
-   - Architecture/params → Read config_a.json or hf_detail_a.json
-   - Benchmarks → Read readme_a.md and search for benchmark tables
-   - VRAM/quantization → Read hf_gguf_*.json files
-   - Pricing → Read novita.json for exact API pricing
-   - Community insights → Read tavily_fanout_*.json for original search results with full context
-   - Extracted article content → Read tavily_extract.json
-3. VERIFY every number you write against the raw file — do NOT blindly trust the compressed overview
-4. Pay attention to source tags in the overview: [provider-page] data may be provider-specific, [vendor-blog] may be promotional
-5. Reference files at /tmp/blog_references/ have style guides — read style-analysis.md and module-templates.md before writing
+AGENT WORKFLOW — you have full Read/Bash tool access. Follow these steps:
+
+STEP 1 — UNDERSTAND THE DATA:
+Read the compressed overview above to understand what data is available. Then read key raw files:
+- Architecture/params → Read config_a.json or hf_detail_a.json
+- Benchmarks → Read readme_a.md and search for benchmark tables
+- VRAM/quantization → Read hf_gguf_*.json files
+- Pricing → Read novita.json for exact API pricing
+- Community insights → Read tavily_fanout_*.json for original search results
+- Extracted articles → Read tavily_extract.json
+
+STEP 2 — IDENTIFY USER QUESTIONS:
+From the data (especially Reddit threads, blog comments, community discussions), identify 3-5 KEY QUESTIONS real users are asking about this topic. What problems do they face? What decisions do they need to make?
+
+STEP 3 — PLAN YOUR NARRATIVE:
+Design the article structure to ANSWER those questions. Follow the reader's journey:
+"What is this?" → "Why should I care?" → "How do I use it?" → "What are the gotchas?" → "What does it cost?"
+Use the STRUCTURE REFERENCE above as inspiration — but skip sections with no data, merge related topics, and add angles the template misses.
+
+STEP 4 — WRITE WITH VERIFIED DATA:
+For each section, re-read the relevant raw files to get EXACT numbers. Do NOT blindly trust the compressed overview.
+Pay attention to source tags: [provider-page] data may be provider-specific, [vendor-blog] may be promotional.
+
+STEP 5 — POLISH:
+Read /tmp/blog_references/style-analysis.md and module-templates.md for style guidance.
+Ensure the article reads as one coherent story, not disconnected sections.
 
 RULES:
 - INLINE CITATIONS: Every price, benchmark, spec MUST have an <a href="SOURCE_URL"> link. Bare numbers = UNACCEPTABLE.

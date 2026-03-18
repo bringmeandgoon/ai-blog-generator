@@ -55,12 +55,7 @@ export default function KeywordInput({ onArticlesGenerated }) {
       return;
     }
 
-    if (result && result.outline_review) {
-      setOutlineData(result);
-      setProgress('');
-      setIsGenerating(false);
-      return;
-    }
+    // outline_review removed — architect merged into write agent
 
     if (result && result.clarification) {
       setClarification({
