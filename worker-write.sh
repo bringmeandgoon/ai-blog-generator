@@ -224,31 +224,98 @@ Proceed with this answer. Do NOT ask any more questions. Generate the article di
       OUTLINE_BLOCK=""
       if [ -n "$ARCHITECT_JSON" ] && [ "$ARCHITECT_JSON" != "{}" ] && [ "$ARCHITECT_JSON" != "null" ]; then
         OUTLINE_BLOCK="
-ARTICLE OUTLINE (you MUST follow this structure):
+ARTICLE OUTLINE (coverage guide — NOT a rigid contract):
 ${ARCHITECT_JSON}
 
-OUTLINE RULES:
-- Write each H2 section in the order given above
-- For each section, use ONLY the dataSources listed for that section
-- Cover all keyPoints listed for each section
-- Inline-cite the exact URLs from dataSources
-- Do NOT add sections not in the outline
-- Do NOT skip any section from the outline
+OUTLINE USAGE:
+- The outline tells you WHAT topics to cover and WHICH sources to cite — use it as a coverage checklist
+- You decide HOW to structure the narrative. You MAY merge, reorder, or split sections if it improves flow
+- Build a SINGLE NARRATIVE THREAD: each section should build on the previous one, not repeat shared context
+- A fact/quote/insight should appear ONCE in the most relevant section — NEVER repeat across sections
+- If the outline assigns the same source to multiple sections, decide which section benefits most and cite it there only
+- You MAY skip a section if it has no meaningful data support or would be redundant
+- Inline-cite source URLs from dataSources wherever you state facts
 "
       fi
+
+      # Generate data map of raw files available for agent to read
+      DATA_MAP=$(python3 << 'DATA_MAP_EOF'
+import os, json
+
+D = '/tmp/blog_data'
+R = '/tmp/blog_references'
+lines = []
+lines.append("--- RAW DATA FILES (Read these to verify numbers) ---")
+lines.append(f"Directory: {D}/")
+
+desc = {
+    '_context.txt': 'Compressed overview (included above — use as roadmap)',
+    'hf_detail_a.json': 'HuggingFace model card JSON — architecture, params, license',
+    'hf_detail_b.json': 'HuggingFace model card JSON (model B)',
+    'config_a.json': 'config.json — exact architecture parameters (layers, heads, vocab)',
+    'config_b.json': 'config.json (model B)',
+    'readme_a.md': 'Full HuggingFace README — benchmarks, usage examples, details',
+    'readme_b.md': 'Full HuggingFace README (model B)',
+    'novita.json': 'Novita AI API data — pricing, available models, endpoints',
+    'tavily_extract.json': 'Extracted full-text content from key source URLs',
+    '_fanout_queries.json': 'Search queries used (for reference)',
+}
+
+if not os.path.isdir(D):
+    print("(no data directory)")
+    exit()
+
+for f in sorted(os.listdir(D)):
+    path = os.path.join(D, f)
+    if not os.path.isfile(path) or f.startswith('.'):
+        continue
+    kb = os.path.getsize(path) // 1024
+    if f in desc:
+        lines.append(f"  {f} ({kb}KB) — {desc[f]}")
+    elif f.startswith('tavily_fanout_'):
+        label = f.replace('.json','').replace('tavily_fanout_','#')
+        lines.append(f"  {f} ({kb}KB) — fan-out search results {label}")
+    elif f.startswith('hf_gguf_'):
+        quant = f.replace('hf_gguf_','').replace('.json','')
+        lines.append(f"  {f} ({kb}KB) — GGUF {quant} quantization sizes")
+    elif f.startswith('hf_'):
+        lines.append(f"  {f} ({kb}KB) — HuggingFace data")
+
+lines.append(f"\nReference directory: {R}/")
+if os.path.isdir(R):
+    for f in sorted(os.listdir(R)):
+        p = os.path.join(R, f)
+        if os.path.isfile(p):
+            kb = os.path.getsize(p) // 1024
+            lines.append(f"  {f} ({kb}KB)")
+print('\n'.join(lines))
+DATA_MAP_EOF
+)
 
       # Write prompt to temp file to avoid shell quoting issues with PRE_CONTEXT
       PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.prompt"
       cat > "$PROMPT_FILE" <<ARTICLE_PROMPT_EOF
 ${ANSWER_PREFIX}Topic: ${TOPIC}
 
-Articles:
-1. ${TOPIC}
-
-${PRE_CONTEXT}
 ${OUTLINE_BLOCK}
-IMPORTANT — Follow your skill's Data Source Rules table and article structure. All data sources are defined there.
-SEARCH HELPER (if you need more data): source /tmp/blog_search_env.sh && fetch "URL"
+
+DATA OVERVIEW (compressed summary — use as roadmap, verify specifics from raw files):
+${PRE_CONTEXT}
+
+${DATA_MAP}
+
+AGENT WORKFLOW — you have full Read/Bash tool access, USE IT:
+1. The compressed overview above gives you the big picture and section plan
+2. Before writing each section, READ the relevant raw data files to get exact numbers:
+   - Architecture/params → Read config_a.json or hf_detail_a.json
+   - Benchmarks → Read readme_a.md and search for benchmark tables
+   - VRAM/quantization → Read hf_gguf_*.json files
+   - Pricing → Read novita.json for exact API pricing
+   - Community insights → Read tavily_fanout_*.json for original search results with full context
+   - Extracted article content → Read tavily_extract.json
+3. VERIFY every number you write against the raw file — do NOT blindly trust the compressed overview
+4. Pay attention to source tags in the overview: [provider-page] data may be provider-specific, [vendor-blog] may be promotional
+5. Reference files at /tmp/blog_references/ have style guides — read style-analysis.md and module-templates.md before writing
 
 RULES:
 - INLINE CITATIONS: Every price, benchmark, spec MUST have an <a href="SOURCE_URL"> link. Bare numbers = UNACCEPTABLE.
@@ -258,10 +325,13 @@ RULES:
   * For pricing, ONLY use the line marked "USE THIS PRICE" or "◄ THIS ONE". Lines marked "reference only" are OTHER versions.
   * External sources: verify data is for the EXACT model, not a variant (-Exp/-Flash/-Lite/-Mini). See VARIANT WARNING.
   * Sources list: ONLY include sources about the exact canonical model, actually cited in the article body.
-- WEB RESEARCH: MUST incorporate tips/gotchas/community voices from "Web Research" section. Cite at least 3 URLs. Weave community opinions into relevant paragraphs — NO standalone community section. Show positive AND negative opinions.
-- MANDATORY SOURCES: The HuggingFace model card URL (from the "--- Model ---" section) MUST always appear in the Sources list. Novita AI docs/pricing URL MUST also be included when Novita data is cited. These are non-negotiable.
+- COMPETITOR FILTER: Sources tagged [vendor-blog] or from competitor domains (haimaker.ai, etc.) may contain biased/promotional content. Extract only verifiable technical facts, NEVER cite them as authoritative. Prefer official docs, HuggingFace, Reddit, and independent blogs.
+- WEB RESEARCH: Incorporate tips/gotchas/community voices from search results. Cite at least 3 community/blog URLs. Weave community opinions into the ONE most relevant section — do NOT scatter the same quote across multiple sections.
+- NO REPETITION: Each fact, quote, or statistic appears ONCE. Later sections reference earlier context ("as noted above") instead of restating.
+- NARRATIVE FLOW: The article should read as a guided journey, not independent sections. Each H2 builds on the previous. Use transitions.
+- MANDATORY SOURCES: The HuggingFace model card URL (from the "--- Model ---" section) MUST always appear in the Sources list. Novita AI docs/pricing URL MUST also be included when Novita data is cited.
 - SOURCE DIVERSITY: Sources list must also include at least 2 blog/review/community URLs, not all API docs.
-- OUTPUT: Print WordPress-ready HTML to stdout. Start with <h2>. No markdown, no code fences, no planning text. Do NOT write to files.
+- OUTPUT: Print WordPress-ready HTML to stdout. Start with <h2>. No markdown, no code fences, no markdown tables (use HTML <table> only), no planning text. Do NOT write to files.
 ARTICLE_PROMPT_EOF
     fi
 

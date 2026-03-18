@@ -1,14 +1,22 @@
 # Write Agent Rules
 
-You receive an **outline JSON** (sections with data source assignments) and **pre-fetched research context**. Your job is to write the complete article following the outline exactly. Do NOT add, remove, or reorder sections — the outline is your contract.
+You receive an **outline JSON** (coverage guide) and **pre-fetched research context**. The outline tells you WHAT to cover; you decide HOW to tell the story. You may merge, reorder, or skip outline sections to build a better narrative.
 
 ## Core Principles
 
-1. **Thesis-Driven, Not Spec-Listing**: Every article MUST have a clear thesis/conclusion stated in the first 2 paragraphs. "Model A beats B for X use case because..." NOT "Here are the specs of both models."
-2. **Data Accuracy First**: Get specs from official sources — never guess
-3. **Visual-First Writing**: Minimize text walls. Lead with tables, charts, callout boxes, and key numbers. Paragraphs should be 2-3 sentences MAX
-4. **Problem-Oriented**: Titles and content should solve specific problems or guide decisions
-5. **Specific over Generic**: Use exact version numbers, specific benchmarks, concrete trade-offs
+1. **Narrative-Driven, Not Section-Filling**: Build a single story thread — each section advances the argument, building on what came before. The reader should feel guided from "what is this?" → "why does it matter to me?" → "how do I use it?" → "what should I watch out for?"
+2. **Thesis-Driven, Not Spec-Listing**: Every article MUST have a clear thesis/conclusion stated in the first 2 paragraphs. "Model A beats B for X use case because..." NOT "Here are the specs of both models."
+3. **Data Accuracy First**: Get specs from official sources — never guess
+4. **Visual-First Writing**: Minimize text walls. Lead with tables, charts, callout boxes, and key numbers. Paragraphs should be 2-3 sentences MAX
+5. **Problem-Oriented**: Titles and content should solve specific problems or guide decisions
+6. **Specific over Generic**: Use exact version numbers, specific benchmarks, concrete trade-offs
+
+## Anti-Repetition Rules (CRITICAL)
+
+- **One fact, one place**: A statistic, quote, or insight appears ONCE in the article — in the section where it has the most impact
+- **No shared-context restating**: If you introduced "262K context window" in the intro, later sections reference it ("the 262K window mentioned above") instead of re-explaining
+- **Community voices are woven, not sprinkled**: A Reddit quote should appear in ONE section where it best supports the argument — not repeated across 3 sections
+- **Forward references, not repetition**: "As we'll see in the cost section below..." or "Building on the setup above..."
 6. **English Only**: ALL output must be in English. NEVER translate provider names, units, or technical terms into other languages
 7. **No Absolute Claims**: NEVER use "best", "fastest", "most powerful". Use "among the top", "one of the leading", "competitive with"
 8. **Grammar & Proofreading**: Free of grammatical errors, typos, awkward phrasing
@@ -144,9 +152,22 @@ You receive an **outline JSON** (sections with data source assignments) and **pr
 
 800-1500 words. Shorter with more visuals is better than longer with more text.
 
+## Data Verification (CRITICAL)
+
+You have full Read tool access. Raw data files are at `/tmp/blog_data/`. **Before writing each section**, read the relevant raw file to verify exact numbers — do NOT rely solely on the compressed overview in the prompt.
+
+| Data Type | Raw File to Read | Why |
+|-----------|-----------------|-----|
+| Architecture, params | `config_a.json`, `hf_detail_a.json` | Exact layer count, hidden size, vocab |
+| Benchmarks | `readme_a.md` | Full benchmark tables with all scores |
+| VRAM / quantization | `hf_gguf_*.json` | Exact file sizes per quantization level |
+| API pricing | `novita.json` | Exact per-token pricing |
+| Community insights | `tavily_fanout_*.json` | Original search results with full context |
+| Extracted articles | `tavily_extract.json` | Full text from key source URLs |
+
 ## References
 
-Reference files are at `/tmp/blog_references/`. Read them with `cat /tmp/blog_references/<filename>` when needed.
+Reference files are at `/tmp/blog_references/`. Read them with the Read tool when needed.
 
 | File | When to Read | Content |
 |------|-------------|---------|

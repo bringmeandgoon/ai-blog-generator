@@ -38,7 +38,7 @@ ${ARTICLE_TEMPLATE}"
       # Write architect user prompt to file
       ARCHITECT_PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.architect_prompt"
       cat > "$ARCHITECT_PROMPT_FILE" <<ARCHITECT_PROMPT_EOF
-You are an article architect. Based on the article type template, data source rules, and pre-fetched research data, design the H2 structure for the article.
+You are an article architect. Design the H2 structure for a blog article based on what real users want to know and what data is actually available.
 
 Topic: ${TOPIC}
 Article Type: ${ARTICLE_TYPE}
@@ -46,22 +46,28 @@ Article Type: ${ARTICLE_TYPE}
 Pre-fetched data:
 ${PRE_CONTEXT}
 
+DESIGN APPROACH — question-driven, not template-driven:
+1. First, analyze the pre-fetched data (especially Reddit, blog, community sections) to identify 3-5 KEY QUESTIONS that real users are asking about this topic. Look for: explicit questions in forum threads, recurring concerns, common confusions, and practical "how do I..." patterns.
+2. Design H2 sections that directly ANSWER these questions. Each section title should hint at the question it addresses.
+3. Use the article type template (in system prompt) as a REFERENCE for ordering and coverage — but do NOT blindly follow it. If the data doesn't support a template section, skip it. If the data reveals an important angle the template misses, add it.
+4. Sections with rich data support should be detailed (3-4 keyPoints). Sections with thin data should be brief (1-2 keyPoints) or merged into another section.
+
 RULES:
-1. Follow the section structure defined in the article type template (provided in system prompt)
-2. For each H2, specify:
-   - title: The H2 heading text
+1. For each H2, specify:
+   - title: The H2 heading text (should hint at the question it answers)
    - keyPoints: What this section should cover (2-4 bullet points)
    - dataSources: Exact URLs from the pre-fetched data that this section should cite
-3. SOURCE MATCHING — match sources to sections by domain expertise:
-   - Architecture/params/technical specs sections → use HuggingFace URLs (huggingface.co/...)
-   - Pricing/cost sections → use Novita AI URLs, OpenRouter data, provider URLs
-   - Benchmark/performance sections → use HuggingFace README benchmarks, Artificial Analysis URLs
-   - Getting started/deployment sections → use blog URLs, docs URLs
-   - Community/tips sections → use Reddit URLs, blog URLs
-4. Every URL in dataSources MUST come from the pre-fetched data — do NOT invent URLs
-5. Every data source should be assigned to at least one section
-6. Ensure sections flow logically: What → Why → How → Cost → Conclusion
-7. Always end with a Conclusion/Key Takeaways section and FAQ section
+2. SOURCE MATCHING — match sources to sections by domain expertise:
+   - Architecture/params/technical specs → HuggingFace URLs
+   - Pricing/cost → Novita AI URLs, OpenRouter data, provider URLs
+   - Benchmark/performance → HuggingFace README benchmarks, Artificial Analysis URLs
+   - Getting started/deployment → blog URLs, docs URLs
+   - Community/tips → Reddit URLs, blog URLs
+3. Every URL in dataSources MUST come from the pre-fetched data — do NOT invent URLs
+4. Every data source should be assigned to at least one section
+5. Ensure sections flow logically: What → Why → How → Cost → Conclusion
+6. Always end with a Conclusion/Key Takeaways section and FAQ section
+7. The FAQ section MUST incorporate remaining user questions from the QUESTIONS section that weren't fully addressed in the main body
 
 OUTPUT: Valid JSON only — no markdown fences, no explanation. Schema:
 {

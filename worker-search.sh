@@ -118,24 +118,27 @@ print(m.group(1).strip() if m else '')
 
   # Novita API (public JSON, no auth needed)
   fetch "https://api.novita.ai/v3/openai/models" > /tmp/blog_data/novita.json 2>/dev/null &
-  # --- Tavily API: search user's keywords directly ---
+  # --- Tavily API: query fan-out (LLM-generated diverse queries) ---
   local tavily_key="${TAVILY_API_KEY:-}"
   if [ -n "$tavily_key" ]; then
-    echo "[pre-search] Tavily: searching '$topic' directly"
 
     _tavily_search() {
-      local query="$1" outfile="$2" max_results="${3:-5}"
+      local query="$1" outfile="$2" max_results="${3:-5}" days="${4:-120}"
       [ -z "$query" ] && return
       local body
       body=$(python3 -c "
 import json, sys
-print(json.dumps({
+d = {
     'query': sys.argv[1],
     'max_results': int(sys.argv[2]),
     'search_depth': 'advanced',
-    'include_answer': True
-}))
-" "$query" "$max_results")
+    'include_answer': True,
+}
+days = int(sys.argv[3])
+if days > 0:
+    d['days'] = days
+print(json.dumps(d))
+" "$query" "$max_results" "$days")
       $CURL -sL --max-time 30 ${PROXY:+-x "$PROXY"} \
         -H "Authorization: Bearer $tavily_key" \
         -H "Content-Type: application/json" \
@@ -143,23 +146,295 @@ print(json.dumps({
         -d "$body" > "$outfile" 2>/dev/null &
     }
 
-    # API Provider / "on novita" articles: search by model name only; others: full keywords
-    local search_term="$topic"
-    if echo "$topic" | grep -qiE 'api\s*provider|api\s*pricing|api\s*cost|\bon\s+novita'; then
-      search_term="$hf_query"
+    # Detect article type for fan-out prompt (mirrors worker-architect.sh)
+    local _fanout_type="platform"
+    echo "$topic" | grep -qiE 'vram|\bmemory\b' && _fanout_type="vram"
+    echo "$topic" | grep -qiE ' vs ' && _fanout_type="vs"
+    echo "$topic" | grep -qiE 'api.*(provider|pricing|cost|comparison)' && _fanout_type="api_provider"
+    echo "$topic" | grep -qiE 'how.*(access|use)' && _fanout_type="how_to"
+    echo "$topic" | grep -qiE '\b(in|with)\s+(opencode|open.code|openclaw|open.claw|claude.code|trae|cursor|continue|codecompanion)\b' && _fanout_type="tool_integration"
+    echo "$topic" | grep -qiE '\bon\s+(novita|together|replicate|hugging.?face|fireworks|groq|deepinfra)\b|^deploy\b' && _fanout_type="platform"
+
+    # --- Query fan-out: MiniMax generates diverse search queries per article type ---
+    local fanout_queries=""
+    local ppio_key="${PPIO_API_KEY:-}"
+    if [ -n "$ppio_key" ]; then
+      echo "[pre-search] Fan-out: generating queries via MiniMax (type=$_fanout_type)..."
+      # Build MiniMax prompt via Python, call via curl (urllib gets 403 from some envs)
+      local _fanout_body
+      _fanout_body=$(FANOUT_TOPIC="$topic" FANOUT_MODEL="$hf_query" FANOUT_TYPE="$_fanout_type" python3 << 'FANOUT_BODY_EOF'
+import json, os
+
+topic = os.environ['FANOUT_TOPIC']
+model = os.environ['FANOUT_MODEL']
+atype = os.environ['FANOUT_TYPE']
+
+TYPE_CONTEXTS = {
+    "vram": {
+        "focus": "The article helps readers decide what hardware they need to run {model} locally.",
+        "angles": [
+            "VRAM requirements per quantization level (FP16/Q8/Q4) with specific GPU models",
+            "Real user experiences running {model} on specific GPUs (RTX 4090, A100, etc.)",
+            "Quantization quality tradeoffs — how much quality is lost at Q4 vs Q8",
+            "Self-hosted deployment guides with actual memory measurements",
+            "Cost comparison: local GPU vs cloud API for {model} inference",
+        ],
+    },
+    "vs": {
+        "focus": "The article compares {topic} to help readers pick the right model for their use case.",
+        "angles": [
+            "Head-to-head benchmark scores between the two models on current benchmarks",
+            "Community opinions: which model wins for coding / chat / reasoning tasks",
+            "Pricing and availability differences across API providers",
+            "Real-world usage comparison (latency, quality, context handling)",
+            "Migration experience: switching between these models in production",
+        ],
+    },
+    "how_to": {
+        "focus": "The article walks readers through all ways to access and use {model}, from easiest to advanced.",
+        "angles": [
+            "Official API and playground access for {model} — quickstart guides",
+            "Community setup experiences and gotchas when first using {model}",
+            "Code examples and SDK integration for {model} API",
+            "IDE/tool integration (Cursor, Claude Code, Continue) with {model}",
+            "Local deployment steps and hardware requirements for {model}",
+        ],
+    },
+    "api_provider": {
+        "focus": "The article compares API providers offering {model}, helping readers pick the best one.",
+        "angles": [
+            "Provider pricing comparison for {model} API (per-token costs)",
+            "Throughput and latency benchmarks across different {model} providers",
+            "Provider reliability reviews and rate limit experiences",
+            "Feature comparison: function calling, streaming, context limits by provider",
+            "Cost optimization tips for running {model} API in production",
+        ],
+    },
+    "tool_integration": {
+        "focus": "The article shows how to set up and use {model} specifically inside {topic_tool}. Readers care about the tool's workflow, NOT the model's general capabilities.",
+        "angles": [
+            "{model} {topic_tool} setup configuration guide",
+            "{topic_tool} with {model} real-world coding experience results",
+            "{model} {topic_tool} vs other models in {topic_tool} comparison",
+            "{topic_tool} {model} performance latency agentic coding tasks",
+            "{model} context window limits practical impact in {topic_tool}",
+        ],
+    },
+    "platform": {
+        "focus": "The article introduces {model} on a specific platform, covering deployment and access.",
+        "angles": [
+            "{model} model capabilities architecture key features overview",
+            "{model} community reception user reviews experiences",
+            "Getting started with {model} API deployment tutorial",
+            "{model} benchmark performance comparison with current models",
+            "{model} pricing cost inference production deployment",
+        ],
+    },
+}
+
+# Extract tool name for tool_integration context
+topic_tool = ""
+import re as _re
+_tool_match = _re.search(r'\b(?:in|with)\s+(opencode|open\s*code|openclaw|open\s*claw|claude\s*code|trae|cursor|continue|codecompanion)', topic, _re.IGNORECASE)
+if _tool_match:
+    topic_tool = _tool_match.group(1).strip()
+
+ctx_data = TYPE_CONTEXTS.get(atype, TYPE_CONTEXTS["platform"])
+article_focus = ctx_data["focus"].format(model=model, topic=topic, topic_tool=topic_tool)
+search_angles = [a.format(model=model, topic=topic, topic_tool=topic_tool) for a in ctx_data["angles"]]
+
+prompt = f"""Generate exactly 5 diverse Tavily web search queries for a technical blog article.
+
+FULL TOPIC: {topic}
+MODEL NAME: {model}
+ARTICLE TYPE: {atype}
+ARTICLE FOCUS: {article_focus}
+
+SEARCH ANGLES (generate one query per angle):
+1. {search_angles[0]}
+2. {search_angles[1]}
+3. {search_angles[2]}
+4. {search_angles[3]}
+5. {search_angles[4]}
+
+RULES:
+- Every query MUST include "{model}"
+- Queries must be specific to the article focus above — NOT generic model queries
+- RECENCY: Include "2026" in at least 3 queries to get recent results. For comparison queries, use CURRENT model versions (e.g. "Claude 4.6" not "Claude 3.5", "GPT-5" not "GPT-4o")
+- For tool_integration: queries must mention the specific tool name, not just the model
+- For vs: queries must mention both models being compared, using their LATEST versions
+- Keep each query concise (under 15 words)
+
+Output ONLY a JSON array of 5 query strings. No explanation."""
+
+print(json.dumps({
+    'model': 'minimax/minimax-m2.5',
+    'messages': [{'role': 'user', 'content': prompt}],
+    'max_tokens': 2000,
+    'temperature': 0.7,
+}))
+FANOUT_BODY_EOF
+      )
+      local _fanout_raw
+      _fanout_raw=$($CURL -sL --max-time 30 ${PROXY:+-x "$PROXY"} \
+        -H "Authorization: Bearer $ppio_key" \
+        -H "Content-Type: application/json" \
+        "https://api.ppinfra.com/v3/openai/chat/completions" \
+        -d "$_fanout_body" 2>/dev/null)
+      fanout_queries=$(echo "$_fanout_raw" | python3 -c "
+import json, sys, re
+try:
+    data = json.loads(sys.stdin.read(), strict=False)
+    content = data['choices'][0]['message']['content']
+    if '<think>' in content:
+        content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+    m = re.search(r'\[.*\]', content, re.DOTALL)
+    if m:
+        queries = json.loads(m.group())
+        queries = [q for q in queries if isinstance(q, str) and len(q) > 5][:6]
+        print(json.dumps(queries))
+    else:
+        print('[]')
+except Exception as e:
+    print('[]', flush=True)
+    print(f'[fan-out parse error: {e}]', file=sys.stderr)
+")
     fi
 
-    # Query 1: exact topic keywords
-    _tavily_search "$search_term" "/tmp/blog_data/tavily_review.json"
+    # Parse fan-out result; count valid queries
+    local _fq_count
+    _fq_count=$(echo "$fanout_queries" | python3 -c "import sys,json; print(len(json.loads(sys.stdin.read())))" 2>/dev/null || echo "0")
 
-    # Query 2: Reddit discussions
-    _tavily_search "site:reddit.com $search_term" "/tmp/blog_data/tavily_reddit.json"
+    if [ "$_fq_count" -gt 0 ]; then
+      echo "[pre-search] Fan-out: $_fq_count queries, executing in parallel (over-fetch for dedup)..."
+      # Save queries for downstream context labeling
+      echo "$fanout_queries" > /tmp/blog_data/_fanout_queries.json
+      # Pass 1: Execute all fan-out queries in parallel, over-fetch (10 results each) for dedup headroom
+      echo "$fanout_queries" | python3 -c "
+import json, sys
+for i, q in enumerate(json.loads(sys.stdin.read())):
+    print(f'{i}\t{q}')
+" | while IFS=$'\t' read -r idx query; do
+        echo "[pre-search] Fan-out[$idx]: $query"
+        _tavily_search "$query" "/tmp/blog_data/tavily_fanout_${idx}.json" 10
+      done
+      wait
+      # Pass 2: Deduplicate across queries — each URL kept only in the first query that found it
+      # Queries with < 5 unique results get supplementary searches
+      DEDUP_RESULT=$(FANOUT_QUERIES="$fanout_queries" python3 << 'DEDUP_EOF'
+import json, os, glob, sys
 
-    # Query 3: tech blog articles — prioritize Medium, dev.to
-    _tavily_search "$search_term site:medium.com OR site:dev.to OR site:towardsdatascience.com OR site:hashnode.dev OR site:substack.com" "/tmp/blog_data/tavily_blog_priority.json" 10
+D = '/tmp/blog_data'
+queries = json.loads(os.environ.get('FANOUT_QUERIES', '[]'))
+n = len(queries)
+MIN_PER_QUERY = 5
 
-    # Query 4: Artificial Analysis — model benchmarks, pricing, throughput
-    _tavily_search "site:artificialanalysis.ai/models $hf_query" "/tmp/blog_data/tavily_aa.json" 5
+seen_urls = set()
+deficient = []  # (idx, query, shortfall)
+
+for i in range(n):
+    fpath = f"{D}/tavily_fanout_{i}.json"
+    if not os.path.exists(fpath) or os.path.getsize(fpath) < 50:
+        deficient.append((i, queries[i] if i < len(queries) else '', MIN_PER_QUERY))
+        continue
+    try:
+        data = json.load(open(fpath))
+    except:
+        deficient.append((i, queries[i] if i < len(queries) else '', MIN_PER_QUERY))
+        continue
+    results = data.get('results', [])
+    unique = [r for r in results if r.get('url', '') not in seen_urls]
+    for r in unique:
+        seen_urls.add(r.get('url', ''))
+    # Keep only unique results, up to 5
+    data['results'] = unique[:MIN_PER_QUERY]
+    json.dump(data, open(fpath, 'w'), ensure_ascii=False)
+    actual = len(data['results'])
+    if actual < MIN_PER_QUERY:
+        deficient.append((i, queries[i] if i < len(queries) else '', MIN_PER_QUERY - actual))
+    print(f"[dedup] fanout_{i}: {len(results)} raw → {actual} unique", file=sys.stderr)
+
+# Report deficient queries for supplementary search
+if deficient:
+    # Output: idx\tquery\tshortfall
+    for idx, q, short in deficient:
+        print(f"{idx}\t{q}\t{short}")
+else:
+    print("")
+DEDUP_EOF
+)
+      # Pass 3: Supplementary search for deficient queries
+      if [ -n "$DEDUP_RESULT" ]; then
+        echo "[pre-search] Fan-out dedup: some queries need supplementary results..."
+        echo "$DEDUP_RESULT" | while IFS=$'\t' read -r idx query shortfall; do
+          [ -z "$idx" ] && continue
+          echo "[pre-search] Fan-out[$idx]: supplementary search (need $shortfall more)"
+          _tavily_search "$query additional resources" "/tmp/blog_data/tavily_fanout_${idx}_supp.json" 8
+        done
+        wait
+        # Merge supplementary results into main files, dedup again
+        python3 << 'MERGE_EOF'
+import json, os, glob, sys
+
+D = '/tmp/blog_data'
+MIN_PER_QUERY = 5
+
+# Collect all URLs already in main files
+all_urls = set()
+main_files = sorted(glob.glob(f"{D}/tavily_fanout_[0-9].json"))
+for fpath in main_files:
+    try:
+        data = json.load(open(fpath))
+        for r in data.get('results', []):
+            all_urls.add(r.get('url', ''))
+    except:
+        pass
+
+# Merge supplementary into main
+supp_files = sorted(glob.glob(f"{D}/tavily_fanout_*_supp.json"))
+for supp_path in supp_files:
+    # Extract index: tavily_fanout_2_supp.json → 2
+    base = os.path.basename(supp_path)
+    idx = base.replace('tavily_fanout_','').replace('_supp.json','')
+    main_path = f"{D}/tavily_fanout_{idx}.json"
+    try:
+        main_data = json.load(open(main_path))
+    except:
+        main_data = {'results': []}
+    try:
+        supp_data = json.load(open(supp_path))
+    except:
+        os.remove(supp_path)
+        continue
+    current = len(main_data.get('results', []))
+    need = MIN_PER_QUERY - current
+    if need > 0:
+        for r in supp_data.get('results', []):
+            url = r.get('url', '')
+            if url and url not in all_urls:
+                main_data['results'].append(r)
+                all_urls.add(url)
+                need -= 1
+                if need <= 0:
+                    break
+    json.dump(main_data, open(main_path, 'w'), ensure_ascii=False)
+    os.remove(supp_path)
+    print(f"[merge] fanout_{idx}: now {len(main_data['results'])} results", file=sys.stderr)
+MERGE_EOF
+      fi
+    else
+      # Fallback: hardcoded queries when MiniMax unavailable
+      echo "[pre-search] Fan-out unavailable, using hardcoded queries"
+      local search_term="$topic"
+      if echo "$topic" | grep -qiE 'api\s*provider|api\s*pricing|api\s*cost|\bon\s+novita'; then
+        search_term="$hf_query"
+      fi
+      echo '["'"$search_term"'","site:reddit.com '"$search_term"'","'"$search_term"' site:medium.com OR site:dev.to","site:artificialanalysis.ai/models '"$hf_query"'"]' > /tmp/blog_data/_fanout_queries.json
+      _tavily_search "$search_term" "/tmp/blog_data/tavily_fanout_0.json"
+      _tavily_search "site:reddit.com $search_term" "/tmp/blog_data/tavily_fanout_1.json"
+      _tavily_search "$search_term site:medium.com OR site:dev.to OR site:towardsdatascience.com OR site:hashnode.dev OR site:substack.com" "/tmp/blog_data/tavily_fanout_2.json" 10
+      _tavily_search "site:artificialanalysis.ai/models $hf_query" "/tmp/blog_data/tavily_fanout_3.json" 5 0
+    fi
 
   else
     echo "[pre-search] No TAVILY_API_KEY, skipping web search"
@@ -467,8 +742,7 @@ from urllib.parse import urlparse
 SKIP_DOMAINS = {'huggingface.co', 'novita.ai', 'reddit.com', 'arxiv.org', 'github.com'}
 seen = set()
 urls = []
-for pf in ['tavily_review.json', 'tavily_reddit.json', 'tavily_blog_priority.json', 'tavily_aa.json',
-           'tavily_provider_0.json', 'tavily_provider_1.json', 'tavily_provider_2.json']:
+for pf in [f for f in sorted(os.listdir('/tmp/blog_data')) if f.startswith('tavily_') and f.endswith('.json') and '_extract' not in f]:
     path = f"/tmp/blog_data/{pf}"
     if not os.path.exists(path) or os.path.getsize(path) < 50:
         continue
@@ -1028,13 +1302,23 @@ def _collect_tavily_raw():
                     extract_urls.add(r.get('url', ''))
         except: pass
 
-    # Search results: answer + deduplicated snippets
-    for fname, label in [
-        ('tavily_review.json', 'Topic Search'),
-        ('tavily_reddit.json', 'Reddit'),
-        ('tavily_blog_priority.json', 'Blog (Medium/dev.to)'),
-        ('tavily_aa.json', 'Artificial Analysis'),
-    ]:
+    # Search results: answer + deduplicated snippets (dynamic from fan-out)
+    # Load fan-out query labels if available
+    _fanout_labels = {}
+    _fq_path = f"{D}/_fanout_queries.json"
+    if os.path.exists(_fq_path):
+        try:
+            _fq_list = json.load(open(_fq_path))
+            for _i, _q in enumerate(_fq_list):
+                _fanout_labels[f"tavily_fanout_{_i}.json"] = _q[:60]
+        except: pass
+    # Collect all tavily search files (fanout + provider, skip extract)
+    _tavily_files = []
+    for _fn in sorted(os.listdir(D)):
+        if _fn.startswith('tavily_') and _fn.endswith('.json') and '_extract' not in _fn and '_queries' not in _fn:
+            _label = _fanout_labels.get(_fn, _fn.replace('.json','').replace('tavily_',''))
+            _tavily_files.append((_fn, _label))
+    for fname, label in _tavily_files:
         path = f"{D}/{fname}"
         if not os.path.exists(path) or os.path.getsize(path) < 50:
             continue
@@ -1117,33 +1401,42 @@ INSTRUCTIONS:
 1. Remove anything NOT about "{canonical_name}" exactly (wrong model versions, unrelated topics)
 2. KEEP: practical insights, real-world user experiences, deployment tips, gotchas, performance observations, cost experiences, community opinions (both positive and negative)
 3. REMOVE: specs/benchmarks (writer gets those from HuggingFace), code snippets, setup boilerplate, navigation/UI text
+4. CONTEXT PRESERVATION (CRITICAL): Every fact must retain its original scope and conditions:
+   - If a capability is provider-specific, prefix with the provider name: "[on Together AI] supports 100K context"
+   - If a feature is only available via official API (not open-source), say so: "[Alibaba official API only] 1M context via YaRN"
+   - If data comes from a competitor/vendor blog, tag it: "[vendor: haimaker.ai] claims lowest pricing"
+   - If a comparison involves a specific model, note its current status if known: "[GPT-4o — deprecated]"
+   - NEVER strip the qualifying conditions from a fact. "Provider X offers 100K" must NOT become just "supports 100K"
 
 SOURCE ATTRIBUTION FORMAT (CRITICAL):
-- First, list all cited source URLs as a numbered index:
-  [1] https://example.com/article-about-model
-  [2] https://reddit.com/r/LocalLLaMA/...
-  ...
+- First, list all cited source URLs as a numbered index, with source TYPE tag:
+  [1] [provider-page] https://example.com/provider-offering
+  [2] [reddit-thread] https://reddit.com/r/LocalLLaMA/...
+  [3] [vendor-blog] https://competitor.ai/blog/...
+  [4] [official-docs] https://huggingface.co/...
+  [5] [tech-blog] https://medium.com/...
+  Source types: provider-page | reddit-thread | vendor-blog | official-docs | tech-blog | tutorial | benchmark-site
 - Then, EVERY fact/insight in the body MUST end with its source number(s), e.g.:
-  "Runs at 45 tokens/s on dual 4090s with INT4 quantization [3]. However, context lengths above 32K cause significant slowdown [2][5]."
+  "[on Novita AI] runs at 57 tokens/s [1]. Reddit users report context lengths above 32K cause significant slowdown [2][5]."
 - A sentence without a source number is UNACCEPTABLE. If you cannot attribute it, drop it.
 
 OUTPUT FORMAT:
 SOURCES:
-[1] url1
-[2] url2
+[1] [source-type] url1
+[2] [source-type] url2
 ...
 
 PERFORMANCE:
-[facts with source numbers]
+[facts with source context and numbers]
 
 DEPLOYMENT:
-[facts with source numbers]
+[facts with source context and numbers]
 
 COMMUNITY:
-[facts with source numbers]
+[facts with source context and numbers]
 
 COST:
-[facts with source numbers]
+[facts with source context and numbers]
 
 CONSTRAINTS:
 - Max 12000 characters total (source index + body). Use the space — more context = better article.
@@ -1177,6 +1470,25 @@ CONSTRAINTS:
     except Exception as e:
         print(f"[pre-search] LLM filter failed ({e}), using Python-only pre-filter", flush=True)
         return pre_text  # fallback
+
+# --- Search coverage summary (helps architect gauge data density per angle) ---
+_fq_path = f"{D}/_fanout_queries.json"
+if os.path.exists(_fq_path):
+    try:
+        _fq_list = json.load(open(_fq_path))
+        ctx.append("--- Search Coverage (fan-out queries → result count) ---")
+        for _i, _q in enumerate(_fq_list):
+            _fp = f"{D}/tavily_fanout_{_i}.json"
+            _cnt = 0
+            if os.path.exists(_fp) and os.path.getsize(_fp) > 50:
+                try:
+                    _cnt = len(json.load(open(_fp)).get('results', []))
+                except: pass
+            density = "rich" if _cnt >= 4 else "moderate" if _cnt >= 2 else "sparse"
+            ctx.append(f"  [{density:8s}] ({_cnt} results) {_q}")
+        ctx.append("Use this to gauge which angles have strong data support (→ expand) vs sparse (→ keep brief or skip).")
+        ctx.append("")
+    except: pass
 
 # --- Run the filtering pipeline ---
 _raw_web = _collect_tavily_raw()
