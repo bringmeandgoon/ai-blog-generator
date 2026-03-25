@@ -13,17 +13,20 @@ prepare_write_context() {
       # Strip removed URLs from context
       PRE_CONTEXT=$(echo "$PRE_CONTEXT" | strip_removed_urls "$REMOVED_URLS")
 
-      # Load user-confirmed outline (from outline_review confirm step)
-      ARCHITECT_JSON=""
-      if [ -f "$JOBS_DIR/logs/${JOBID}.outline.json" ]; then
-        ARCHITECT_JSON=$(cat "$JOBS_DIR/logs/${JOBID}.outline.json")
-        echo "[worker] [$JOBID] Write: loaded outline ($(echo "$ARCHITECT_JSON" | wc -c | tr -d ' ') bytes)"
-      elif [ -f "$JOBS_DIR/logs/${JOBID}.architect.json" ]; then
-        ARCHITECT_JSON=$(cat "$JOBS_DIR/logs/${JOBID}.architect.json")
-        echo "[worker] [$JOBID] Write: loaded architect outline ($(echo "$ARCHITECT_JSON" | wc -c | tr -d ' ') bytes)"
-      else
-        echo "[worker] [$JOBID] Write: no outline found, write agent will plan independently"
-      fi
+      # Detect article type (same logic as worker-search fan-out)
+      local TOPIC_FOR_TYPE
+      TOPIC_FOR_TYPE=$(cat "$JOBS_DIR/pending/${JOBID}.processing" | python3 -c "import sys,json; print(json.load(sys.stdin)['topic'])" 2>/dev/null)
+      ARTICLE_TYPE="platform"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'vram|\bmemory\b' && ARTICLE_TYPE="vram"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE ' vs ' && ARTICLE_TYPE="vs"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'api.*(provider|pricing|cost|comparison)' && ARTICLE_TYPE="api_provider"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE 'how.*(access|use)' && ARTICLE_TYPE="how_to"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE '\b(in|with)\s+(opencode|open.code|openclaw|open.claw|claude.code|trae|cursor|continue|codecompanion)\b' && ARTICLE_TYPE="tool_integration"
+      echo "$TOPIC_FOR_TYPE" | grep -qiE '\bon\s+(novita|together|replicate|hugging.?face|fireworks|groq|deepinfra)\b|^deploy\b' && ARTICLE_TYPE="platform"
+
+      # Load article type template for write agent
+      ARTICLE_TEMPLATE=$(load_template "$ARTICLE_TYPE")
+      echo "[worker] [$JOBID] Write: type=$ARTICLE_TYPE, template=$(echo "$ARTICLE_TEMPLATE" | wc -c | tr -d ' ') bytes"
 
 }
 
@@ -115,32 +118,14 @@ Proceed with this answer. Do NOT ask any more questions. Generate the article di
 "
       fi
 
-      # Build outline block from architect JSON (user-confirmed outline)
-      OUTLINE_BLOCK=""
-      if [ -n "$ARCHITECT_JSON" ]; then
-        OUTLINE_BLOCK=$(ARCH_JSON="$ARCHITECT_JSON" python3 -c "
-import json, os
-arch = json.loads(os.environ['ARCH_JSON'])
-lines = []
-cq = arch.get('coreQuestion', '')
-if cq:
-    lines.append(f'CORE QUESTION this article answers: {cq}')
-    lines.append('Every section must serve answering this question.')
-    lines.append('')
-lines.append('USER-CONFIRMED OUTLINE (you MUST cover all sections and keyPoints):')
-lines.append('')
-for sec in arch.get('sections', []):
-    lines.append(f\"## {sec.get('h2', 'Untitled')}\")
-    for kp in sec.get('keyPoints', []):
-        lines.append(f'  - {kp}')
-    ds = sec.get('dataSources', [])
-    if ds:
-        lines.append('  Sources:')
-        for s in ds:
-            lines.append(f\"    - [{s.get('label','')}]({s.get('url','')})\")
-    lines.append('')
-print('\n'.join(lines))
-" 2>/dev/null)
+      # Build article type template block for the write agent (architect merged in)
+      TEMPLATE_BLOCK=""
+      if [ -n "$ARTICLE_TEMPLATE" ]; then
+        TEMPLATE_BLOCK="
+ARTICLE TYPE: ${ARTICLE_TYPE}
+STRUCTURE REFERENCE (use as guidance, NOT rigid template):
+${ARTICLE_TEMPLATE}
+"
       fi
 
       # Generate data map of raw files available for agent to read
@@ -199,17 +184,42 @@ DATA_MAP_EOF
       # Write prompt to temp file to avoid shell quoting issues with PRE_CONTEXT
       PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.prompt"
       cat > "$PROMPT_FILE" <<ARTICLE_PROMPT_EOF
-/dev-blog-writer
-
 ${ANSWER_PREFIX}Topic: ${TOPIC}
-${OUTLINE_BLOCK}
+${TEMPLATE_BLOCK}
 
 DATA OVERVIEW (compressed summary — use as roadmap, verify specifics from raw files):
 ${PRE_CONTEXT}
 
 ${DATA_MAP}
 
---- DATA ACCURACY ---
+AGENT WORKFLOW — you have full Read/Bash tool access. Follow these steps:
+
+STEP 1 — UNDERSTAND THE DATA:
+Read the compressed overview above to understand what data is available. Then read key raw files:
+- Architecture/params → Read config_a.json or hf_detail_a.json
+- Benchmarks → Read readme_a.md and search for benchmark tables
+- VRAM/quantization → Read hf_gguf_*.json files
+- Pricing → Read novita.json for exact API pricing
+- Community insights → Read tavily_fanout_*.json for original search results
+- Extracted articles → Read tavily_extract.json
+
+STEP 2 — IDENTIFY USER QUESTIONS:
+From the data (especially Reddit threads, blog comments, community discussions), identify 3-5 KEY QUESTIONS real users are asking about this topic. What problems do they face? What decisions do they need to make?
+
+STEP 3 — PLAN YOUR NARRATIVE:
+Design the article structure to ANSWER those questions. Follow the reader's journey:
+"What is this?" → "Why should I care?" → "How do I use it?" → "What are the gotchas?" → "What does it cost?"
+Use the STRUCTURE REFERENCE above as inspiration — but skip sections with no data, merge related topics, and add angles the template misses.
+
+STEP 4 — WRITE WITH VERIFIED DATA:
+For each section, re-read the relevant raw files to get EXACT numbers. Do NOT blindly trust the compressed overview.
+Pay attention to source tags: [provider-page] data may be provider-specific, [vendor-blog] may be promotional.
+
+STEP 5 — POLISH:
+Read /tmp/blog_references/style-analysis.md and module-templates.md for style guidance.
+Ensure the article reads as one coherent story, not disconnected sections.
+
+RULES:
 - INLINE CITATIONS: Every price, benchmark, spec MUST have an <a href="SOURCE_URL"> link. Bare numbers = UNACCEPTABLE.
 - NOT FOUND → write "not publicly disclosed". NEVER guess or use your own knowledge.
 - VERSION PRECISION (#1 RULE):

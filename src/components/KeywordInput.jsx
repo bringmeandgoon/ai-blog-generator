@@ -57,22 +57,7 @@ export default function KeywordInput({ onArticlesGenerated }) {
       return;
     }
 
-    if (result && result.outlineReview) {
-      setOutlineData({ outline: result.outline, allSources: result.allSources, jobId: result.jobId });
-      setReviewData(null);
-      setProgress('');
-      setIsGenerating(false);
-      return;
-    }
-
-    if (result && result.writeReview) {
-      setWriteReviewData({ article: result.article, jobId: result.jobId });
-      setOutlineData(null);
-      setReviewData(null);
-      setProgress('');
-      setIsGenerating(false);
-      return;
-    }
+    // outline_review removed — architect merged into write agent
 
     if (result && result.clarification) {
       setClarification({

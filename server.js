@@ -324,9 +324,7 @@ app.get('/api/jobs/:jobId', (req, res) => {
     return res.json({ status: 'review', sources: job.sources, summary: job.summary, rawContext: job.rawContext });
   }
 
-  if (job.status === 'outline_review') {
-    return res.json({ status: 'outline_review', outline: job.outline, allSources: job.allSources });
-  }
+  // outline_review removed — architect merged into write agent
 
   if (job.status === 'write_review') {
     return res.json({ status: 'write_review', article: job.article });
@@ -430,8 +428,8 @@ app.post('/api/jobs/:jobId/confirm', async (req, res) => {
   const { action, feedback, removedUrls = [], editedOutline, editedContent } = req.body;
   const job = jobResults.get(jobId);
 
-  if (!job || (job.status !== 'review' && job.status !== 'outline_review' && job.status !== 'write_review')) {
-    return res.status(400).json({ error: 'Job not in review, outline_review, or write_review status' });
+  if (!job || job.status !== 'review') {
+    return res.status(400).json({ error: 'Job not in review status' });
   }
 
   const { topic, outputMode } = job;
@@ -523,35 +521,10 @@ app.post('/api/jobs/:jobId/confirm', async (req, res) => {
       jobResults.set(jobId, { status: 'error', error: err.message });
     });
 
-  } else if (action === 'confirm_outline' && job.status === 'outline_review') {
-    // Outline confirmed → save edited outline → start generate
-    console.log(`[server] Job ${jobId} outline confirmed → generate`);
-    const outlineFile = join(__dirname, `jobs/logs/${jobId}.outline.json`);
-    writeFileSync(outlineFile, JSON.stringify(editedOutline));
+  } else {
+    // Default from review: confirm sources → go directly to generate (architect merged into write)
+    console.log(`[server] Job ${jobId} confirmed → generate (architect+write merged)`);
     startGenerateAndWait(jobId, topic, outputMode, { removedUrls });
-
-  } else if (job.status === 'review') {
-    // Default from review: confirm sources → go to architect phase
-    console.log(`[server] Job ${jobId} confirmed → architect`);
-    writeFileSync(jobFile, JSON.stringify({ topic, outputMode, phase: 'architect', removedUrls }));
-    jobResults.set(jobId, { status: 'processing', createdAt: Date.now() });
-
-    waitForResult(jobId).then(result => {
-      if (result.status === 'outline_review') {
-        jobResults.set(jobId, {
-          status: 'outline_review',
-          topic, outputMode,
-          outline: result.outline,
-          allSources: result.allSources,
-          createdAt: Date.now(),
-        });
-        console.log(`[server] Job ${jobId} outline_review ready`);
-      } else {
-        jobResults.set(jobId, { status: 'error', error: 'Unexpected result from architect' });
-      }
-    }).catch(err => {
-      jobResults.set(jobId, { status: 'error', error: err.message });
-    });
   }
 
   res.json({ status: 'ok' });
