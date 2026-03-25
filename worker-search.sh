@@ -1010,6 +1010,26 @@ def fmt_model(label, config_path, readme_path, detail_path='', preferred_repo=''
                 ctx.append(row + " |")
             ctx.append("")
 
+        # --- Extract inline text scores: "X% in/on BenchmarkName" ---
+        # Catches benchmarks only shown in images or prose (e.g. MiniMax M2.5 SWE/Terminal Bench)
+        text_scores = []
+        seen_bench_names = {re.sub(r'[^a-z0-9]', '', b['bench'].lower()) for b in all_benchmarks}
+        for m in re.finditer(
+            r'(\d+\.?\d*)\s*%\s+(?:in|on)\s+([\w][\w\s\-\.\/]+?)(?=\s*[,\.\(]|\s+and\b|\s*$)',
+            readme_raw[:15000], re.IGNORECASE | re.MULTILINE
+        ):
+            score = float(m.group(1))
+            bench = m.group(2).strip().rstrip('.')
+            bench_norm = re.sub(r'[^a-z0-9]', '', bench.lower())
+            if 2 < len(bench) < 60 and score > 0 and bench_norm not in seen_bench_names:
+                text_scores.append((bench, score))
+                seen_bench_names.add(bench_norm)
+        if text_scores:
+            ctx.append("SCORES MENTIONED IN TEXT (model's own numbers, no competitor comparison):")
+            for bench, score in text_scores:
+                ctx.append(f"  {bench}: {score}%")
+            ctx.append("")
+
         # --- Extract key README sections (Features, Deployment, Quantization, etc.) ---
         # These are important for article content beyond just benchmarks
         key_sections = []
