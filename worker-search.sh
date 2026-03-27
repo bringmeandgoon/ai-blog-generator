@@ -181,6 +181,8 @@ except: pass
 
   # Novita API (public JSON, no auth needed)
   fetch "https://api.novita.ai/v3/openai/models" > /tmp/blog_data/novita.json 2>/dev/null &
+  # OpenRouter model list (for provider lookup)
+  fetch "https://openrouter.ai/api/v1/models" > /tmp/blog_data/openrouter_models.json 2>/dev/null &
   # Novita GPU products (live pricing via cnovita CLI)
   if command -v novita >/dev/null 2>&1 && [ -n "${NOVITA_API_KEY:-}" ]; then
     NOVITA_API_KEY="$NOVITA_API_KEY" novita gpu products --json-output > /tmp/blog_data/novita_gpu_products.json 2>/dev/null &
