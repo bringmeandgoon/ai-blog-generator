@@ -26,6 +26,21 @@
 - 不要注释保留死代码，直接删除
 - storage key、env var、配置项一并清理
 
+## ⛔ 严禁改动的核心架构
+
+### 4 步 Pipeline（绝对不能合并/删除任何一步）
+```
+Search → Architect → Write → Rewrite+QC
+```
+对应的 job phase 和 status：
+1. `phase: (initial)` → `status: review` — 用户审核 sources
+2. `phase: architect` → `status: outline_review` — 用户审核 outline
+3. `phase: generate` → `status: write_review` — 用户审核草稿
+4. `phase: rewrite` → `status: done` — 完成
+
+**禁止任何理由合并步骤（如"architect merged into write"）。这是重大事故。**
+修改任何 pipeline 相关代码（server.js confirm 端点、skillCaller.js pollJob、KeywordInput.jsx handleResult）之前，必须先确认 4 步流程完整保留。
+
 ## 项目架构
 - 文章生成：前端 → Express backend → job queue → worker.sh → `claude -p` (Claude Code CLI)
 - TUN 模式：所有出站请求不用 proxy flag，unset proxy env vars，ClashX Pro TUN 透明代理
