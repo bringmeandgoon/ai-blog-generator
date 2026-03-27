@@ -181,8 +181,9 @@ except: pass
 
   # Novita API (public JSON, no auth needed)
   fetch "https://api.novita.ai/v3/openai/models" > /tmp/blog_data/novita.json 2>/dev/null &
-  # OpenRouter model list (for provider lookup)
+  # OpenRouter model list (for provider lookup) — save PID to wait before use
   fetch "https://openrouter.ai/api/v1/models" > /tmp/blog_data/openrouter_models.json 2>/dev/null &
+  OR_MODELS_PID=$!
   # Novita GPU products (live pricing via cnovita CLI)
   if command -v novita >/dev/null 2>&1 && [ -n "${NOVITA_API_KEY:-}" ]; then
     NOVITA_API_KEY="$NOVITA_API_KEY" novita gpu products --json-output > /tmp/blog_data/novita_gpu_products.json 2>/dev/null &
@@ -208,9 +209,10 @@ except: pass
   local _unsloth_repo
     PPLX_QUERIES="$fanout_queries" PPLX_KEY="$pplx_key" https_proxy="$PROXY" http_proxy="$PROXY" CURL_BIN="$CURL" python3 "$SCRIPT_DIR/scripts/search_perplexity.py"
 
-  # OpenRouter model lookup (only if fetched above)
+  # OpenRouter model lookup — wait for models list to finish downloading
+  wait "${OR_MODELS_PID:-}" 2>/dev/null
   local or_model_id=""
-  if [ -f /tmp/blog_data/openrouter_models.json ]; then
+  if [ -f /tmp/blog_data/openrouter_models.json ] && [ -s /tmp/blog_data/openrouter_models.json ]; then
   or_model_id=$(python3 -c "
 import json, re, sys
 query = sys.argv[1]
