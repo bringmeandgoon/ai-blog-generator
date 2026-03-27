@@ -24,14 +24,23 @@ print(re.sub(r'\s+', ' ', t).strip())
   CHECK_PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.check_prompt"
   ARTICLE_CONTENT=$(cat /tmp/blog_data/_qc_input.txt | head -c 50000)
   cat > "$CHECK_PROMPT_FILE" << __CHECK_EOF__
-/novita-blog-reviewer
-
 CANONICAL MODEL NAME: ${BLOG_MODEL_NAME}
 
-=== ARTICLE TO REVIEW ===
+DATA FILES (read these to verify numbers before fixing):
+- Novita API pricing → /tmp/blog_data/novita.json
+- Model params/architecture → /tmp/blog_data/hf_detail_a.json, /tmp/blog_data/config_a.json
+- Benchmarks & README → /tmp/blog_data/readme_a.md
+- VRAM/quantization → /tmp/blog_data/hf_gguf_*.json (read all matching files)
+- Search results → /tmp/blog_data/tavily_fanout_*.json
+
+=== ARTICLE TO REVIEW & FIX ===
 ${ARTICLE_CONTENT}
 
-Perform Check 1 (Quality Review & Correction). Output the corrected article ONLY.
+Instructions:
+1. Read the data files above to verify factual claims (prices, VRAM, params, benchmarks).
+2. Fix all issues you can verify from the data.
+3. For claims you CANNOT verify (e.g. latest model version, competitor pricing), add an HTML comment: <!-- REVIEW NOTE: [what needs manual verification] -->
+4. Output the corrected article ONLY. No report, no commentary.
 __CHECK_EOF__
 
   CHECK_RESULTFILE="$JOBS_DIR/logs/${JOBID}.check_result"
