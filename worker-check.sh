@@ -23,54 +23,97 @@ print(re.sub(r'\s+', ' ', t).strip())
 
   CHECK_PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.check_prompt"
   ARTICLE_CONTENT=$(cat /tmp/blog_data/_qc_input.txt | head -c 50000)
-  cat > "$CHECK_PROMPT_FILE" << __CHECK_EOF__
+  # --- Step 1a: Run novita-blog-reviewer to get issues list ---
+  cat > "$CHECK_PROMPT_FILE" << __REVIEW_EOF__
+/novita-blog-reviewer
+
 CANONICAL MODEL NAME: ${BLOG_MODEL_NAME}
 
-DATA FILES (read these to verify numbers before fixing):
-- Novita API pricing → /tmp/blog_data/novita.json
-- Model params/architecture → /tmp/blog_data/hf_detail_a.json, /tmp/blog_data/config_a.json
-- Benchmarks & README → /tmp/blog_data/readme_a.md
-- VRAM/quantization → /tmp/blog_data/hf_gguf_*.json (read all matching files)
-- Search results → /tmp/blog_data/tavily_fanout_*.json
-
-=== ARTICLE TO REVIEW & FIX ===
+=== ARTICLE TO REVIEW ===
 ${ARTICLE_CONTENT}
-
-Instructions:
-1. Read the data files above to verify factual claims (prices, VRAM, params, benchmarks).
-2. Fix all issues you can verify from the data.
-3. For claims you CANNOT verify (e.g. latest model version, competitor pricing), add an HTML comment: <!-- REVIEW NOTE: [what needs manual verification] -->
-4. Output the corrected article ONLY. No report, no commentary.
-__CHECK_EOF__
+__REVIEW_EOF__
 
   CHECK_RESULTFILE="$JOBS_DIR/logs/${JOBID}.check_result"
   CHECK_LOGFILE="$JOBS_DIR/logs/${JOBID}.check_log"
 
   cat "$CHECK_PROMPT_FILE" | claude -p \
-    --system-prompt "$CHECK_RULES" \
     --model "$MODEL" \
     --output-format text \
     --permission-mode bypassPermissions \
     >"$CHECK_RESULTFILE" 2>"$CHECK_LOGFILE" &
   CHECK_PID=$!
 
-  # Wait with timeout (5 min)
   CHECK_ELAPSED=0
   CHECK_TIMEOUT=300
   while kill -0 $CHECK_PID 2>/dev/null; do
     sleep 3
     CHECK_ELAPSED=$((CHECK_ELAPSED + 3))
     if [ $CHECK_ELAPSED -ge $CHECK_TIMEOUT ]; then
-      echo "[worker] [$JOBID] Check claude -p timed out after ${CHECK_TIMEOUT}s"
+      echo "[worker] [$JOBID] Reviewer timed out after ${CHECK_TIMEOUT}s"
       kill $CHECK_PID 2>/dev/null; sleep 1; kill -9 $CHECK_PID 2>/dev/null
       break
     fi
   done
   wait $CHECK_PID 2>/dev/null
 
-  CHECKED_RESULT=""
-  [ -f "$CHECK_RESULTFILE" ] && CHECKED_RESULT=$(cat "$CHECK_RESULTFILE")
+  REVIEW_REPORT=""
+  [ -f "$CHECK_RESULTFILE" ] && REVIEW_REPORT=$(cat "$CHECK_RESULTFILE")
   rm -f "$CHECK_PROMPT_FILE" "$CHECK_RESULTFILE"
+
+  echo "[worker] [$JOBID] Reviewer done ($(echo "$REVIEW_REPORT" | wc -c | tr -d ' ') chars)"
+
+  # --- Step 1b: Correction pass — fix article based on review report ---
+  CORRECTION_PROMPT_FILE="$JOBS_DIR/logs/${JOBID}.correction_prompt"
+  cat > "$CORRECTION_PROMPT_FILE" << __CORRECTION_EOF__
+CANONICAL MODEL NAME: ${BLOG_MODEL_NAME}
+
+DATA FILES (read to verify numbers):
+- Novita API pricing → /tmp/blog_data/novita.json
+- Model params/architecture → /tmp/blog_data/hf_detail_a.json, /tmp/blog_data/config_a.json
+- Benchmarks & README → /tmp/blog_data/readme_a.md
+- VRAM/quantization → /tmp/blog_data/hf_gguf_*.json
+- Search results → /tmp/blog_data/tavily_fanout_*.json
+
+=== REVIEW ISSUES FOUND ===
+${REVIEW_REPORT}
+
+=== ORIGINAL ARTICLE ===
+${ARTICLE_CONTENT}
+
+Instructions:
+1. Read the data files to verify factual claims before fixing.
+2. Fix every ❌ issue identified in the review above.
+3. For ⚠️ items you cannot verify from data files, add: <!-- REVIEW NOTE: [description] -->
+4. Output the corrected article ONLY. No commentary.
+__CORRECTION_EOF__
+
+  CORRECTION_RESULTFILE="$JOBS_DIR/logs/${JOBID}.correction_result"
+  CORRECTION_LOGFILE="$JOBS_DIR/logs/${JOBID}.correction_log"
+
+  cat "$CORRECTION_PROMPT_FILE" | claude -p \
+    --system-prompt "$CHECK_RULES" \
+    --model "$MODEL" \
+    --output-format text \
+    --permission-mode bypassPermissions \
+    >"$CORRECTION_RESULTFILE" 2>"$CORRECTION_LOGFILE" &
+  CORRECTION_PID=$!
+
+  CORRECTION_ELAPSED=0
+  CORRECTION_TIMEOUT=480
+  while kill -0 $CORRECTION_PID 2>/dev/null; do
+    sleep 3
+    CORRECTION_ELAPSED=$((CORRECTION_ELAPSED + 3))
+    if [ $CORRECTION_ELAPSED -ge $CORRECTION_TIMEOUT ]; then
+      echo "[worker] [$JOBID] Correction timed out after ${CORRECTION_TIMEOUT}s"
+      kill $CORRECTION_PID 2>/dev/null; sleep 1; kill -9 $CORRECTION_PID 2>/dev/null
+      break
+    fi
+  done
+  wait $CORRECTION_PID 2>/dev/null
+
+  CHECKED_RESULT=""
+  [ -f "$CORRECTION_RESULTFILE" ] && CHECKED_RESULT=$(cat "$CORRECTION_RESULTFILE")
+  rm -f "$CORRECTION_PROMPT_FILE" "$CORRECTION_RESULTFILE"
 
   # Post-process: strip <think> tags and markdown fences
   CHECKED_RESULT=$(echo "$CHECKED_RESULT" | python3 << 'POSTPROCESS_EOF'
